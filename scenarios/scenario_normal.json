@@ -1,0 +1,14 @@
+{
+  "scenario_id": "normal_operation",
+  "description": "Normal pump operation with no significant anomaly evidence.",
+  "expected_incident_level": "normal",
+  "expected_decision": "continued_monitoring",
+  "source_file": "0.csv",
+  "start_row": 0,
+  "analysis_window": 500,
+  "simulation": {
+    "sensor_condition": "stable",
+    "drone_required": false,
+    "visual_anomaly": false
+  }
+}

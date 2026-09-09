@@ -1,0 +1,2597 @@
+# ================================================================
+# AUTONOMOUS INCIDENT RESPONSE
+# STREAMLIT-NATIVE CONTROL-ROOM DASHBOARD
+#
+# Modes:
+#   1. Scenario Validation
+#   2. Dynamic Sensor Simulation
+#
+# No raw HTML / no unsafe_allow_html
+# ================================================================
+
+import sys
+import json
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+
+# ================================================================
+# PROJECT ROOT / PYTHON PATH
+# ================================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+# ================================================================
+# PROJECT IMPORTS
+# ================================================================
+
+from src.agents.tools import load_processed_data
+from src.agents.orchestrator import get_orchestrator_agent
+from src.streaming.dynamic_pipeline import DynamicIncidentPipeline
+
+
+# ================================================================
+# PAGE CONFIG
+# ================================================================
+
+st.set_page_config(
+    page_title="Autonomous Incident Response",
+    page_icon="⚙️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# ================================================================
+# DATA HELPERS
+# ================================================================
+
+def safe_dict(value):
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def safe_list(value):
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def format_probability(value):
+    if value is None:
+        return "—"
+
+    try:
+        return f"{float(value):.2%}"
+    except Exception:
+        return "—"
+
+
+def recursive_find_value(data, keys):
+    """
+    Search nested dictionaries/lists for one of the requested keys.
+    """
+
+    if isinstance(data, dict):
+
+        for key in keys:
+
+            if key in data and data[key] is not None:
+                return data[key]
+
+        for value in data.values():
+
+            result = recursive_find_value(
+                value,
+                keys,
+            )
+
+            if result is not None:
+                return result
+
+    elif isinstance(data, list):
+
+        for item in data:
+
+            result = recursive_find_value(
+                item,
+                keys,
+            )
+
+            if result is not None:
+                return result
+
+    return None
+
+
+def get_ml_probability(analyst):
+
+    value = recursive_find_value(
+        analyst,
+        [
+            "max_probability",
+            "max_anomaly_probability",
+            "ml_probability",
+            "anomaly_probability",
+            "probability",
+        ],
+    )
+
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+
+    except Exception:
+        return None
+
+
+def get_affected_sensor_count(analyst):
+
+    value = recursive_find_value(
+        analyst,
+        [
+            "affected_sensors",
+            "affected_sensor_count",
+            "num_affected_sensors",
+        ],
+    )
+
+    if value is None:
+        return 0
+
+    if isinstance(
+        value,
+        (list, tuple, set),
+    ):
+        return len(value)
+
+    try:
+        return int(value)
+
+    except Exception:
+        return 0
+
+
+def get_sandbox_data(result):
+
+    """
+    Normalize the sandbox result.
+
+    SandboxExecutor stores execution details under:
+        result["sandbox"]["execution"]
+    """
+
+    sandbox = safe_dict(
+        result.get("sandbox")
+    )
+
+    execution = safe_dict(
+        sandbox.get("execution")
+    )
+
+    if execution:
+
+        merged = dict(sandbox)
+
+        merged.update(execution)
+
+        return merged
+
+    return sandbox
+
+
+def display_value(
+    value,
+    default="—",
+):
+
+    if value is None or value == "":
+        return default
+
+    return str(value)
+
+
+# ================================================================
+# SCENARIOS
+# ================================================================
+
+SCENARIOS = {
+    "Normal Operation": "scenario_normal.json",
+    "Ambiguous Condition": "scenario_ambiguous.json",
+    "Pump Fault": "scenario_pump_fault.json",
+}
+
+
+def load_scenario(filename: str) -> dict:
+
+    path = (
+        PROJECT_ROOT
+        / "scenarios"
+        / filename
+    )
+
+    if not path.exists():
+
+        raise FileNotFoundError(
+            f"Scenario file not found:\n{path}"
+        )
+
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+    ) as file:
+
+        return json.load(file)
+
+
+def get_scenario_window(
+    df: pd.DataFrame,
+    scenario: dict,
+) -> pd.DataFrame:
+
+    source_file = scenario["source_file"]
+
+    start_row = int(
+        scenario["start_row"]
+    )
+
+    window_size = int(
+        scenario["analysis_window"]
+    )
+
+    experiment = df[
+        df["source_file"] == source_file
+    ].copy()
+
+    if experiment.empty:
+
+        raise ValueError(
+            f"Source file '{source_file}' "
+            "was not found in processed data."
+        )
+
+    experiment = experiment.reset_index(
+        drop=True
+    )
+
+    end_row = start_row + window_size
+
+    if start_row < 0:
+
+        raise ValueError(
+            "Scenario start_row cannot be negative."
+        )
+
+    if end_row > len(experiment):
+
+        raise ValueError(
+            f"Invalid scenario window.\n"
+            f"Source: {source_file}\n"
+            f"Requested rows: "
+            f"{start_row}-{end_row - 1}\n"
+            f"Available rows: {len(experiment)}"
+        )
+
+    window = experiment.iloc[
+        start_row:end_row
+    ].copy()
+
+    if len(window) != window_size:
+
+        raise ValueError(
+            f"Expected {window_size} samples "
+            f"but received {len(window)}."
+        )
+
+    return window
+
+
+# ================================================================
+# SESSION STATE
+# ================================================================
+
+if "incident_result" not in st.session_state:
+
+    st.session_state.incident_result = None
+
+
+if "last_scenario_id" not in st.session_state:
+
+    st.session_state.last_scenario_id = None
+
+
+if "dynamic_pipeline" not in st.session_state:
+
+    st.session_state.dynamic_pipeline = None
+
+
+if "dynamic_result" not in st.session_state:
+
+    st.session_state.dynamic_result = None
+
+
+if "dynamic_running" not in st.session_state:
+
+    st.session_state.dynamic_running = False
+
+
+# ================================================================
+# SIDEBAR
+# ================================================================
+
+with st.sidebar:
+
+    st.title("Control Panel")
+
+    st.caption(
+        "Autonomous multi-agent "
+        "industrial monitoring system."
+    )
+
+    st.divider()
+
+    # ============================================================
+    # MODE
+    # ============================================================
+
+    st.subheader("Operating Mode")
+
+    mode = st.radio(
+        "Mode",
+        [
+            "Scenario Validation",
+            "Dynamic Sensor Simulation",
+        ],
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    # ============================================================
+    # SCENARIO MODE
+    # ============================================================
+
+    if mode == "Scenario Validation":
+
+        st.subheader("Scenario")
+
+        selected_name = st.selectbox(
+            "Scenario",
+            list(SCENARIOS.keys()),
+            label_visibility="collapsed",
+        )
+
+        selected_file = SCENARIOS[
+            selected_name
+        ]
+
+        scenario = load_scenario(
+            selected_file
+        )
+
+        # Clear a previous scenario result immediately when the user
+        # switches to a different scenario. This prevents stale results
+        # from one scenario (for example Ambiguous Condition) from being
+        # displayed under another scenario (for example Pump Fault).
+        current_scenario_id = scenario.get("scenario_id")
+
+        if (
+            st.session_state.last_scenario_id is not None
+            and st.session_state.last_scenario_id != current_scenario_id
+        ):
+            st.session_state.incident_result = None
+
+        start_row = int(
+            scenario.get(
+                "start_row",
+                0,
+            )
+        )
+
+        window_size = int(
+            scenario.get(
+                "analysis_window",
+                0,
+            )
+        )
+
+        end_row = (
+            start_row
+            + window_size
+            - 1
+        )
+
+        st.divider()
+
+        st.caption(
+            "Scenario Information"
+        )
+
+        st.markdown(
+            f"**Scenario ID:** "
+            f"{display_value(scenario.get('scenario_id'))}"
+        )
+
+        st.markdown(
+            f"**Source CSV:** "
+            f"{display_value(scenario.get('source_file'))}"
+        )
+
+        st.markdown(
+            f"**Row Range:** "
+            f"{start_row} → {end_row}"
+        )
+
+        st.markdown(
+            f"**Sample Count:** "
+            f"{window_size}"
+        )
+
+        st.divider()
+
+        run_button = st.button(
+            "▶ Run Autonomous Investigation",
+            use_container_width=True,
+            type="primary",
+        )
+
+        dynamic_button = False
+
+        st.divider()
+
+        st.caption(
+            "Safety: all operational actions are "
+            "executed through the sandbox layer. "
+            "This dashboard operates in simulation mode."
+        )
+
+    # ============================================================
+    # DYNAMIC MODE
+    # ============================================================
+
+    else:
+
+        st.subheader(
+            "Dynamic Sensor Simulation"
+        )
+
+        st.caption(
+            "Replay industrial sensor measurements "
+            "as a virtual real-time stream."
+        )
+
+        # --------------------------------------------------------
+        # Load data for available experiments
+        # --------------------------------------------------------
+
+        try:
+
+            processed_data = (
+                load_processed_data()
+            )
+
+            source_files = sorted(
+                processed_data[
+                    "source_file"
+                ]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+        except Exception as error:
+
+            source_files = []
+
+            st.error(
+                "Unable to load processed sensor data."
+            )
+
+            st.exception(error)
+
+        # --------------------------------------------------------
+        # Source selection
+        # --------------------------------------------------------
+
+        if source_files:
+
+            dynamic_source = st.selectbox(
+                "Source Experiment",
+                source_files,
+            )
+
+            source_length = len(
+                processed_data[
+                    processed_data[
+                        "source_file"
+                    ].astype(str)
+                    == dynamic_source
+                ]
+            )
+
+            dynamic_start_row = st.number_input(
+                "Start Row",
+                min_value=0,
+                max_value=max(
+                    0,
+                    source_length - 1,
+                ),
+                value=0,
+                step=10,
+            )
+
+            dynamic_batch_size = st.number_input(
+                "Stream Batch Size",
+                min_value=1,
+                max_value=100,
+                value=10,
+                step=1,
+            )
+
+            dynamic_analysis_window = st.number_input(
+                "Analysis Window",
+                min_value=100,
+                max_value=1000,
+                value=500,
+                step=50,
+            )
+
+            st.divider()
+
+            st.caption(
+                f"Available samples: {source_length}"
+            )
+
+            st.caption(
+                "The system continuously evaluates "
+                "a rolling sensor window."
+            )
+
+            dynamic_start_button = st.button(
+                "▶ Start Dynamic Monitoring",
+                use_container_width=True,
+                type="primary",
+            )
+
+            dynamic_next_button = st.button(
+                "⏭ Process Next Batch",
+                use_container_width=True,
+            )
+
+            dynamic_reset_button = st.button(
+                "↻ Reset Stream",
+                use_container_width=True,
+            )
+
+        else:
+
+            dynamic_start_button = False
+            dynamic_next_button = False
+            dynamic_reset_button = False
+
+        run_button = False
+
+        # --------------------------------------------------------
+        # Reset
+        # --------------------------------------------------------
+
+        if dynamic_reset_button:
+
+            st.session_state.dynamic_pipeline = None
+
+            st.session_state.dynamic_result = None
+
+            st.session_state.dynamic_running = False
+
+            st.rerun()
+
+        # --------------------------------------------------------
+        # Start
+        # --------------------------------------------------------
+
+        if dynamic_start_button:
+
+            try:
+
+                pipeline = (
+                    DynamicIncidentPipeline(
+                        source_file=dynamic_source,
+                        start_row=int(
+                            dynamic_start_row
+                        ),
+                        stream_batch_size=int(
+                            dynamic_batch_size
+                        ),
+                        analysis_window=int(
+                            dynamic_analysis_window
+                        ),
+                    )
+                )
+
+                pipeline.reset()
+
+                st.session_state.dynamic_pipeline = (
+                    pipeline
+                )
+
+                st.session_state.dynamic_result = (
+                    None
+                )
+
+                st.session_state.dynamic_running = (
+                    True
+                )
+
+                st.rerun()
+
+            except Exception as error:
+
+                st.error(
+                    "Dynamic monitoring could not be started."
+                )
+
+                st.exception(error)
+
+        # --------------------------------------------------------
+        # Next batch
+        # --------------------------------------------------------
+
+        if dynamic_next_button:
+
+            pipeline = (
+                st.session_state.dynamic_pipeline
+            )
+
+            if pipeline is None:
+
+                st.warning(
+                    "Start Dynamic Monitoring first."
+                )
+
+            else:
+
+                try:
+
+                    result = (
+                        pipeline.process_next_batch()
+                    )
+
+                    st.session_state.dynamic_result = (
+                        result
+                    )
+
+                    if result.get(
+                        "status"
+                    ) == "stream_complete":
+
+                        st.session_state.dynamic_running = (
+                            False
+                        )
+
+                    st.rerun()
+
+                except Exception as error:
+
+                    st.error(
+                        "Dynamic batch processing failed."
+                    )
+
+                    st.exception(error)
+
+        st.divider()
+
+        st.caption(
+            "Safety: the stream is software-simulated. "
+            "No physical sensors or equipment are controlled."
+        )
+
+
+# ================================================================
+# HERO / HEADER
+# ================================================================
+
+st.title(
+    "⚙️ Autonomous Incident Response"
+)
+
+st.subheader(
+    "Multi-Agent Industrial Monitoring & Response System"
+)
+
+status_col1, status_col2, status_col3 = st.columns(
+    [1, 1, 3]
+)
+
+with status_col1:
+
+    st.success(
+        "● SYSTEM ONLINE"
+    )
+
+with status_col2:
+
+    st.info(
+        "SIMULATION MODE"
+    )
+
+with status_col3:
+
+    if mode == "Scenario Validation":
+
+        st.caption(
+            "Validated scenario execution"
+        )
+
+    else:
+
+        st.caption(
+            "Dynamic virtual sensor monitoring"
+        )
+
+st.divider()
+
+
+# ================================================================
+# DYNAMIC MODE DISPLAY
+# ================================================================
+
+if mode == "Dynamic Sensor Simulation":
+
+    st.header(
+        "Dynamic Sensor Monitoring"
+    )
+
+    pipeline = (
+        st.session_state.dynamic_pipeline
+    )
+
+    dynamic_result = (
+        st.session_state.dynamic_result
+    )
+
+    if pipeline is None:
+
+        st.info(
+            "Configure the virtual sensor stream "
+            "from the control panel and click "
+            "'Start Dynamic Monitoring'."
+        )
+
+    else:
+
+        status = pipeline.status()
+
+        # --------------------------------------------------------
+        # Stream status
+        # --------------------------------------------------------
+
+        progress = float(
+            status[
+                "stream"
+            ].get(
+                "progress_percent",
+                0.0,
+            )
+        )
+
+        st.progress(
+            min(
+                max(
+                    progress / 100.0,
+                    0.0,
+                ),
+                1.0,
+            )
+        )
+
+        status_col1, status_col2, status_col3, status_col4 = st.columns(
+            4
+        )
+
+        with status_col1:
+
+            st.metric(
+                "Samples Processed",
+                status[
+                    "stream"
+                ].get(
+                    "samples_processed",
+                    0,
+                ),
+            )
+
+        with status_col2:
+
+            st.metric(
+                "Samples Remaining",
+                status[
+                    "stream"
+                ].get(
+                    "samples_remaining",
+                    0,
+                ),
+            )
+
+        with status_col3:
+
+            st.metric(
+                "Investigations",
+                status[
+                    "investigations_run"
+                ],
+            )
+
+        with status_col4:
+
+            st.metric(
+                "Stream Progress",
+                f"{progress:.2f}%",
+            )
+
+        st.divider()
+
+        # --------------------------------------------------------
+        # Current dynamic result
+        # --------------------------------------------------------
+
+        if dynamic_result is None:
+
+            st.info(
+                "Stream initialized. "
+                "Click 'Process Next Batch' to "
+                "feed new sensor measurements "
+                "into the autonomous pipeline."
+            )
+
+        else:
+
+            result = dynamic_result.get(
+                "result"
+            )
+
+            if result:
+
+                # ====================================================
+                # SAME RESULT DISPLAY AS SCENARIO MODE
+                # ====================================================
+
+                incident_level = str(
+                    result.get(
+                        "incident_level",
+                        "unknown",
+                    )
+                )
+
+                analyst = safe_dict(
+                    result.get(
+                        "data_analyst"
+                    )
+                )
+
+                drone_command = safe_dict(
+                    result.get(
+                        "drone_commander"
+                    )
+                )
+
+                drone_inspection = safe_dict(
+                    result.get(
+                        "drone_inspection"
+                    )
+                )
+
+                rag = safe_dict(
+                    result.get(
+                        "rag"
+                    )
+                )
+
+                escalation = safe_dict(
+                    result.get(
+                        "escalation"
+                    )
+                )
+
+                final = safe_dict(
+                    result.get(
+                        "final_decision"
+                    )
+                )
+
+                sandbox = get_sandbox_data(
+                    result
+                )
+
+                trace = safe_list(
+                    result.get(
+                        "trace"
+                    )
+                )
+
+                probability = (
+                    get_ml_probability(
+                        analyst
+                    )
+                )
+
+                affected_sensors = (
+                    get_affected_sensor_count(
+                        analyst
+                    )
+                )
+
+                drone_dispatched = bool(
+                    drone_command.get(
+                        "drone_dispatched",
+                        False,
+                    )
+                )
+
+                visual_anomaly = bool(
+                    drone_inspection.get(
+                        "visual_anomaly_detected",
+                        drone_inspection.get(
+                            "visual_anomaly",
+                            drone_inspection.get(
+                                "anomaly_detected",
+                                False,
+                            ),
+                        ),
+                    )
+                )
+
+                drone_confidence = (
+                    drone_inspection.get(
+                        "confidence"
+                    )
+                )
+
+                rag_results = safe_list(
+                    rag.get(
+                        "results",
+                        [],
+                    )
+                )
+
+                rag_count = rag.get(
+                    "result_count",
+                    len(rag_results),
+                )
+
+                # ====================================================
+                # INCIDENT OVERVIEW
+                # ====================================================
+
+                st.header(
+                    "Current Incident Assessment"
+                )
+
+                level = incident_level.lower()
+
+                level_icons = {
+                    "critical": "🔴 CRITICAL",
+                    "high": "🟠 HIGH",
+                    "medium": "🟡 MEDIUM",
+                    "low": "🔵 LOW",
+                    "normal": "🟢 NORMAL",
+                }
+
+                level_display = level_icons.get(
+                    level,
+                    f"⚪ {incident_level.upper()}",
+                )
+
+                drone_display = (
+                    "DISPATCHED"
+                    if drone_dispatched
+                    else "NOT REQUIRED"
+                )
+
+                overview_col1, overview_col2, overview_col3, overview_col4 = st.columns(
+                    4
+                )
+
+                with overview_col1:
+
+                    st.metric(
+                        "Incident Level",
+                        level_display,
+                    )
+
+                with overview_col2:
+
+                    st.metric(
+                        "Max ML Probability",
+                        format_probability(
+                            probability
+                        ),
+                    )
+
+                with overview_col3:
+
+                    st.metric(
+                        "Affected Sensors",
+                        affected_sensors,
+                    )
+
+                with overview_col4:
+
+                    st.metric(
+                        "Drone Status",
+                        drone_display,
+                    )
+
+                st.divider()
+
+                # ====================================================
+                # PIPELINE
+                # ====================================================
+
+                st.header(
+                    "Autonomous Response Pipeline"
+                )
+
+                pipeline_stages = [
+                    (
+                        "01",
+                        "🧠 Data Analyst",
+                        "Analysis completed",
+                    ),
+                    (
+                        "02",
+                        "🚁 Drone Commander",
+                        (
+                            "Dispatch + inspection"
+                            if drone_dispatched
+                            else
+                            "No dispatch required"
+                        ),
+                    ),
+                    (
+                        "03",
+                        "📚 RAG Retrieval",
+                        f"{rag_count} evidence result(s)",
+                    ),
+                    (
+                        "04",
+                        "⚖️ Escalation",
+                        escalation.get(
+                            "decision",
+                            "Decision generated",
+                        ),
+                    ),
+                    (
+                        "05",
+                        "🛡️ Sandbox",
+                        sandbox.get(
+                            "status",
+                            "Action simulated",
+                        ),
+                    ),
+                ]
+
+                pipeline_cols = st.columns(
+                    len(
+                        pipeline_stages
+                    )
+                )
+
+                for col, (
+                    number,
+                    name,
+                    value,
+                ) in zip(
+                    pipeline_cols,
+                    pipeline_stages,
+                ):
+
+                    with col:
+
+                        with st.container(
+                            border=True
+                        ):
+
+                            st.caption(
+                                f"STEP {number}"
+                            )
+
+                            st.markdown(
+                                f"**{name}**"
+                            )
+
+                            st.write(
+                                value
+                            )
+
+                st.divider()
+
+                # ====================================================
+                # FINAL DECISION
+                # ====================================================
+
+                decision = final.get(
+                    "decision",
+                    escalation.get(
+                        "decision",
+                        "additional_diagnostic_evidence",
+                    ),
+                )
+
+                priority = final.get(
+                    "priority",
+                    escalation.get(
+                        "priority",
+                        "medium",
+                    ),
+                )
+
+                action = final.get(
+                    "action",
+                    escalation.get(
+                        "action",
+                        "No action specified.",
+                    ),
+                )
+
+                reason = final.get(
+                    "reason",
+                    escalation.get(
+                        "reason",
+                        "No reason specified.",
+                    ),
+                )
+
+                decision_display = (
+                    str(
+                        decision
+                    )
+                    .replace(
+                        "_",
+                        " ",
+                    )
+                    .upper()
+                )
+
+                st.header(
+                    "Final Autonomous Decision"
+                )
+
+                priority_clean = (
+                    str(
+                        priority
+                    )
+                    .strip()
+                    .lower()
+                )
+
+                if priority_clean in (
+                    "critical",
+                    "high",
+                ):
+
+                    st.error(
+                        f"### {decision_display}"
+                    )
+
+                elif priority_clean == "medium":
+
+                    st.warning(
+                        f"### {decision_display}"
+                    )
+
+                else:
+
+                    st.success(
+                        f"### {decision_display}"
+                    )
+
+                decision_detail_col1, decision_detail_col2 = st.columns(
+                    2
+                )
+
+                with decision_detail_col1:
+
+                    st.markdown(
+                        f"**Priority:** "
+                        f"{str(priority).upper()}"
+                    )
+
+                    st.markdown(
+                        f"**Action:** "
+                        f"{display_value(action)}"
+                    )
+
+                with decision_detail_col2:
+
+                    st.markdown(
+                        f"**Reason:** "
+                        f"{display_value(reason)}"
+                    )
+
+                st.divider()
+
+                # ====================================================
+                # DRONE + SANDBOX
+                # ====================================================
+
+                drone_col, sandbox_col = st.columns(
+                    2
+                )
+
+                with drone_col:
+
+                    st.subheader(
+                        "Drone Inspection"
+                    )
+
+                    st.caption(
+                        "Simulated physical verification."
+                    )
+
+                    target = drone_command.get(
+                        "target",
+                        drone_command.get(
+                            "target_area",
+                            drone_command.get(
+                                "inspection_target",
+                                "—",
+                            ),
+                        ),
+                    )
+
+                    checklist = safe_list(
+                        drone_command.get(
+                            "inspection_checklist",
+                            [],
+                        )
+                    )
+
+                    observations = safe_list(
+                        drone_inspection.get(
+                            "observations",
+                            [],
+                        )
+                    )
+
+                    with st.container(
+                        border=True
+                    ):
+
+                        st.markdown(
+                            f"**Dispatch:** "
+                            f"{'YES' if drone_dispatched else 'NO'}"
+                        )
+
+                        st.markdown(
+                            f"**Target Area:** "
+                            f"{display_value(target)}"
+                        )
+
+                        st.markdown(
+                            f"**Visual Anomaly:** "
+                            f"{'DETECTED' if visual_anomaly else 'NOT DETECTED'}"
+                        )
+
+                        st.markdown(
+                            f"**Confidence:** "
+                            f"{format_probability(drone_confidence)}"
+                        )
+
+                    if checklist:
+
+                        with st.expander(
+                            "Inspection checklist"
+                        ):
+
+                            for item in checklist:
+
+                                st.write(
+                                    f"• {item}"
+                                )
+
+                    if observations:
+
+                        with st.expander(
+                            "Drone observations",
+                            expanded=True,
+                        ):
+
+                            for observation in observations:
+
+                                st.write(
+                                    f"• {observation}"
+                                )
+
+                with sandbox_col:
+
+                    st.subheader(
+                        "Sandbox Execution"
+                    )
+
+                    st.caption(
+                        "Safety-controlled action simulation."
+                    )
+
+                    with st.container(
+                        border=True
+                    ):
+
+                        st.markdown(
+                            f"**Status:** "
+                            f"{display_value(sandbox.get('status'))}"
+                        )
+
+                        st.markdown(
+                            f"**Action:** "
+                            f"{display_value(sandbox.get('action'))}"
+                        )
+
+                        st.markdown(
+                            f"**Allowed:** "
+                            f"{display_value(sandbox.get('allowed'))}"
+                        )
+
+                        st.markdown(
+                            f"**Simulation:** "
+                            f"{display_value(sandbox.get('simulation', True))}"
+                        )
+
+                        st.markdown(
+                            f"**Real System Modified:** "
+                            f"{display_value(sandbox.get('real_system_modified', False))}"
+                        )
+
+                st.divider()
+
+                # ====================================================
+                # RAG
+                # ====================================================
+
+                st.header(
+                    "RAG Knowledge Retrieval"
+                )
+
+                st.caption(
+                    "Evidence retrieved from the industrial "
+                    "maintenance knowledge base."
+                )
+
+                rag_query = rag.get(
+                    "query",
+                    "—",
+                )
+
+                st.markdown(
+                    f"**Retrieval Query:** "
+                    f"{display_value(rag_query)}"
+                )
+
+                if rag_results:
+
+                    for item in rag_results:
+
+                        item = safe_dict(
+                            item
+                        )
+
+                        source = (
+                            item.get(
+                                "source"
+                            )
+                            or item.get(
+                                "file"
+                            )
+                            or item.get(
+                                "document"
+                            )
+                            or "Knowledge Base"
+                        )
+
+                        text = (
+                            item.get(
+                                "text"
+                            )
+                            or item.get(
+                                "content"
+                            )
+                            or item.get(
+                                "chunk"
+                            )
+                            or str(item)
+                        )
+
+                        with st.container(
+                            border=True
+                        ):
+
+                            st.markdown(
+                                f"📄 **{display_value(source)}**"
+                            )
+
+                            st.write(
+                                display_value(
+                                    text
+                                )
+                            )
+
+                else:
+
+                    st.info(
+                        "No RAG evidence was retrieved."
+                    )
+
+                st.divider()
+
+                # ====================================================
+                # TRACE
+                # ====================================================
+
+                st.header(
+                    "Agent Action Trace"
+                )
+
+                st.caption(
+                    "Explicit action/observation trace generated "
+                    "by the orchestrator."
+                )
+
+                if trace:
+
+                    for item in trace:
+
+                        item = safe_dict(
+                            item
+                        )
+
+                        step = item.get(
+                            "step",
+                            "—",
+                        )
+
+                        agent = item.get(
+                            "agent",
+                            "unknown_agent",
+                        )
+
+                        trace_action = item.get(
+                            "action",
+                            "—",
+                        )
+
+                        observation = item.get(
+                            "observation",
+                            "—",
+                        )
+
+                        with st.expander(
+                            f"Step {step} — {agent}"
+                        ):
+
+                            st.markdown(
+                                f"**Action:** "
+                                f"{display_value(trace_action)}"
+                            )
+
+                            st.write(
+                                display_value(
+                                    observation
+                                )
+                            )
+
+                else:
+
+                    st.info(
+                        "No agent trace available."
+                    )
+
+                st.divider()
+
+            else:
+
+                # ----------------------------------------------------
+                # Still collecting history
+                # ----------------------------------------------------
+
+                st.subheader(
+                    "Collecting Sensor History"
+                )
+
+                st.info(
+                    "The virtual sensor stream has not "
+                    "yet accumulated enough samples for "
+                    "the first autonomous investigation."
+                )
+
+                current_samples = dynamic_result.get(
+                    "analysis_samples",
+                    0,
+                )
+
+                required_samples = dynamic_result.get(
+                    "required_samples",
+                    pipeline.analysis_window,
+                )
+
+                st.progress(
+                    min(
+                        max(
+                            current_samples
+                            / required_samples,
+                            0.0,
+                        ),
+                        1.0,
+                    )
+                )
+
+                st.write(
+                    f"Rolling window: "
+                    f"{current_samples} / "
+                    f"{required_samples} samples"
+                )
+
+        st.divider()
+
+        # ------------------------------------------------------------
+        # Raw dynamic result
+        # ------------------------------------------------------------
+
+        if dynamic_result is not None:
+
+            with st.expander(
+                "View Dynamic Stream Result",
+                expanded=False,
+            ):
+
+                st.json(
+                    dynamic_result,
+                    expanded=False,
+                )
+
+    st.divider()
+
+    st.caption(
+        "Dynamic mode uses historical industrial measurements "
+        "as a software-simulated sensor stream."
+    )
+
+
+# ================================================================
+# SCENARIO VALIDATION MODE
+# ================================================================
+
+else:
+
+    # ============================================================
+    # INVESTIGATION CONTEXT
+    # ============================================================
+
+    st.header(
+        "Investigation Context"
+    )
+
+    st.caption(
+        "Scenario-selected sensor window supplied "
+        "to the autonomous agent pipeline."
+    )
+
+    context_col1, context_col2, context_col3 = st.columns(
+        3
+    )
+
+    with context_col1:
+
+        with st.container(
+            border=True
+        ):
+
+            st.markdown(
+                "**Scenario**"
+            )
+
+            st.write(
+                selected_name
+            )
+
+            st.markdown(
+                "**Description**"
+            )
+
+            st.write(
+                display_value(
+                    scenario.get(
+                        "description"
+                    )
+                )
+            )
+
+    with context_col2:
+
+        with st.container(
+            border=True
+        ):
+
+            st.markdown(
+                "**Source Experiment**"
+            )
+
+            st.write(
+                display_value(
+                    scenario.get(
+                        "source_file"
+                    )
+                )
+            )
+
+            st.markdown(
+                "**Analysis Window**"
+            )
+
+            st.write(
+                f"Rows {start_row} — {end_row}"
+            )
+
+    with context_col3:
+
+        expected_level = scenario.get(
+            "expected_incident_level",
+            scenario.get(
+                "expected_level",
+                "—",
+            ),
+        )
+
+        expected_decision = scenario.get(
+            "expected_decision",
+            scenario.get(
+                "expected_action",
+                "—",
+            ),
+        )
+
+        with st.container(
+            border=True
+        ):
+
+            st.markdown(
+                "**Expected Level**"
+            )
+
+            st.write(
+                str(
+                    expected_level
+                ).upper()
+            )
+
+            st.markdown(
+                "**Expected Action**"
+            )
+
+            st.write(
+                display_value(
+                    expected_decision
+                )
+            )
+
+    st.divider()
+
+    # ============================================================
+    # RUN INVESTIGATION
+    # ============================================================
+
+    if run_button:
+
+        try:
+
+            with st.spinner(
+                "Running autonomous multi-agent investigation..."
+            ):
+
+                processed_data = (
+                    load_processed_data()
+                )
+
+                sensor_window = (
+                    get_scenario_window(
+                        processed_data,
+                        scenario,
+                    )
+                )
+
+                orchestrator = (
+                    get_orchestrator_agent()
+                )
+
+                result = (
+                    orchestrator.run(
+                        sensor_window
+                    )
+                )
+
+                st.session_state.incident_result = (
+                    result
+                )
+
+                st.session_state.last_scenario_id = (
+                    scenario.get(
+                        "scenario_id"
+                    )
+                )
+
+            st.success(
+                "Autonomous investigation completed successfully."
+            )
+
+        except Exception as error:
+
+            st.error(
+                "The investigation could not be completed."
+            )
+
+            st.exception(
+                error
+            )
+
+    # ============================================================
+    # RESULT
+    # ============================================================
+
+    result = (
+        st.session_state.incident_result
+    )
+
+    # ============================================================
+    # READY STATE
+    # ============================================================
+
+    if result is None:
+
+        st.subheader(
+            "System Ready — Awaiting Investigation"
+        )
+
+        st.info(
+            "Select a scenario from the control panel "
+            "and run the autonomous investigation to "
+            "activate the multi-agent response pipeline."
+        )
+
+    # ============================================================
+    # INVESTIGATION RESULT
+    # ============================================================
+
+    else:
+
+        incident_level = str(
+            result.get(
+                "incident_level",
+                "unknown",
+            )
+        )
+
+        analyst = safe_dict(
+            result.get(
+                "data_analyst"
+            )
+        )
+
+        drone_command = safe_dict(
+            result.get(
+                "drone_commander"
+            )
+        )
+
+        drone_inspection = safe_dict(
+            result.get(
+                "drone_inspection"
+            )
+        )
+
+        rag = safe_dict(
+            result.get(
+                "rag"
+            )
+        )
+
+        escalation = safe_dict(
+            result.get(
+                "escalation"
+            )
+        )
+
+        final = safe_dict(
+            result.get(
+                "final_decision"
+            )
+        )
+
+        sandbox = get_sandbox_data(
+            result
+        )
+
+        trace = safe_list(
+            result.get(
+                "trace"
+            )
+        )
+
+        probability = (
+            get_ml_probability(
+                analyst
+            )
+        )
+
+        affected_sensors = (
+            get_affected_sensor_count(
+                analyst
+            )
+        )
+
+        drone_dispatched = bool(
+            drone_command.get(
+                "drone_dispatched",
+                False,
+            )
+        )
+
+        visual_anomaly = bool(
+            drone_inspection.get(
+                "visual_anomaly_detected",
+                drone_inspection.get(
+                    "visual_anomaly",
+                    drone_inspection.get(
+                        "anomaly_detected",
+                        False,
+                    ),
+                ),
+            )
+        )
+
+        drone_confidence = (
+            drone_inspection.get(
+                "confidence"
+            )
+        )
+
+        rag_results = safe_list(
+            rag.get(
+                "results",
+                [],
+            )
+        )
+
+        rag_count = rag.get(
+            "result_count",
+            len(rag_results),
+        )
+
+        # ========================================================
+        # INCIDENT OVERVIEW
+        # ========================================================
+
+        st.header(
+            "Incident Overview"
+        )
+
+        st.caption(
+            "Current autonomous assessment."
+        )
+
+        level = incident_level.lower()
+
+        level_icons = {
+            "critical": "🔴 CRITICAL",
+            "high": "🟠 HIGH",
+            "medium": "🟡 MEDIUM",
+            "low": "🔵 LOW",
+            "normal": "🟢 NORMAL",
+        }
+
+        level_display = level_icons.get(
+            level,
+            f"⚪ {incident_level.upper()}",
+        )
+
+        drone_display = (
+            "DISPATCHED"
+            if drone_dispatched
+            else "NOT REQUIRED"
+        )
+
+        overview_col1, overview_col2, overview_col3, overview_col4 = st.columns(
+            4
+        )
+
+        with overview_col1:
+
+            st.metric(
+                "Incident Level",
+                level_display,
+                help="Autonomous assessment",
+            )
+
+        with overview_col2:
+
+            st.metric(
+                "Max ML Probability",
+                format_probability(
+                    probability
+                ),
+                help="Supervised ensemble",
+            )
+
+        with overview_col3:
+
+            st.metric(
+                "Affected Sensors",
+                affected_sensors,
+                help="Cross-sensor evidence",
+            )
+
+        with overview_col4:
+
+            st.metric(
+                "Drone Status",
+                drone_display,
+                help="Visual inspection",
+            )
+
+        st.divider()
+
+        # ========================================================
+        # AUTONOMOUS PIPELINE
+        # ========================================================
+
+        st.header(
+            "Autonomous Response Pipeline"
+        )
+
+        st.caption(
+            "Agent-to-agent investigation flow."
+        )
+
+        analyst_status = (
+            "Analysis completed"
+            if analyst
+            else "No result"
+        )
+
+        drone_status = (
+            "Dispatch + inspection"
+            if drone_dispatched
+            else "No dispatch required"
+        )
+
+        rag_status = (
+            f"{rag_count} evidence result(s)"
+        )
+
+        escalation_status = (
+            escalation.get(
+                "decision",
+                "Decision generated",
+            )
+        )
+
+        sandbox_status = (
+            sandbox.get(
+                "status",
+                "Action simulated",
+            )
+        )
+
+        pipeline_stages = [
+            (
+                "01",
+                "🧠 Data Analyst",
+                analyst_status,
+            ),
+            (
+                "02",
+                "🚁 Drone Commander",
+                drone_status,
+            ),
+            (
+                "03",
+                "📚 RAG Retrieval",
+                rag_status,
+            ),
+            (
+                "04",
+                "⚖️ Escalation",
+                escalation_status,
+            ),
+            (
+                "05",
+                "🛡️ Sandbox",
+                sandbox_status,
+            ),
+        ]
+
+        pipeline_cols = st.columns(
+            len(
+                pipeline_stages
+            )
+        )
+
+        for col, (
+            number,
+            name,
+            value,
+        ) in zip(
+            pipeline_cols,
+            pipeline_stages,
+        ):
+
+            with col:
+
+                with st.container(
+                    border=True
+                ):
+
+                    st.caption(
+                        f"STEP {number}"
+                    )
+
+                    st.markdown(
+                        f"**{name}**"
+                    )
+
+                    st.write(
+                        value
+                    )
+
+        st.divider()
+
+        # ========================================================
+        # FINAL DECISION
+        # ========================================================
+
+        decision = final.get(
+            "decision",
+            escalation.get(
+                "decision",
+                "additional_diagnostic_evidence",
+            ),
+        )
+
+        priority = final.get(
+            "priority",
+            escalation.get(
+                "priority",
+                "medium",
+            ),
+        )
+
+        action = final.get(
+            "action",
+            escalation.get(
+                "action",
+                "No action specified.",
+            ),
+        )
+
+        reason = final.get(
+            "reason",
+            escalation.get(
+                "reason",
+                "No reason specified.",
+            ),
+        )
+
+        decision_display = (
+            str(
+                decision
+            )
+            .replace(
+                "_",
+                " ",
+            )
+            .upper()
+        )
+
+        st.header(
+            "Final Autonomous Decision"
+        )
+
+        priority_clean = (
+            str(
+                priority
+            )
+            .strip()
+            .lower()
+        )
+
+        if priority_clean in (
+            "critical",
+            "high",
+        ):
+
+            st.error(
+                f"### {decision_display}"
+            )
+
+        elif priority_clean == "medium":
+
+            st.warning(
+                f"### {decision_display}"
+            )
+
+        else:
+
+            st.success(
+                f"### {decision_display}"
+            )
+
+        decision_detail_col1, decision_detail_col2 = st.columns(
+            2
+        )
+
+        with decision_detail_col1:
+
+            st.markdown(
+                f"**Priority:** "
+                f"{str(priority).upper()}"
+            )
+
+            st.markdown(
+                f"**Action:** "
+                f"{display_value(action)}"
+            )
+
+        with decision_detail_col2:
+
+            st.markdown(
+                f"**Reason:** "
+                f"{display_value(reason)}"
+            )
+
+        st.divider()
+
+        # ========================================================
+        # DRONE + SANDBOX
+        # ========================================================
+
+        drone_col, sandbox_col = st.columns(
+            2
+        )
+
+        with drone_col:
+
+            st.subheader(
+                "Drone Inspection"
+            )
+
+            st.caption(
+                "Simulated physical verification."
+            )
+
+            target = drone_command.get(
+                "target",
+                drone_command.get(
+                    "target_area",
+                    drone_command.get(
+                        "inspection_target",
+                        "—",
+                    ),
+                ),
+            )
+
+            checklist = safe_list(
+                drone_command.get(
+                    "inspection_checklist",
+                    [],
+                )
+            )
+
+            observations = safe_list(
+                drone_inspection.get(
+                    "observations",
+                    [],
+                )
+            )
+
+            with st.container(
+                border=True
+            ):
+
+                st.markdown(
+                    f"**Dispatch:** "
+                    f"{'YES' if drone_dispatched else 'NO'}"
+                )
+
+                st.markdown(
+                    f"**Target Area:** "
+                    f"{display_value(target)}"
+                )
+
+                st.markdown(
+                    f"**Visual Anomaly:** "
+                    f"{'DETECTED' if visual_anomaly else 'NOT DETECTED'}"
+                )
+
+                st.markdown(
+                    f"**Confidence:** "
+                    f"{format_probability(drone_confidence)}"
+                )
+
+            if checklist:
+
+                with st.expander(
+                    "Inspection checklist"
+                ):
+
+                    for item in checklist:
+
+                        st.write(
+                            f"• {item}"
+                        )
+
+            if observations:
+
+                with st.expander(
+                    "Drone observations",
+                    expanded=True,
+                ):
+
+                    for observation in observations:
+
+                        st.write(
+                            f"• {observation}"
+                        )
+
+        with sandbox_col:
+
+            st.subheader(
+                "Sandbox Execution"
+            )
+
+            st.caption(
+                "Safety-controlled action simulation."
+            )
+
+            with st.container(
+                border=True
+            ):
+
+                st.markdown(
+                    f"**Status:** "
+                    f"{display_value(sandbox.get('status'))}"
+                )
+
+                st.markdown(
+                    f"**Action:** "
+                    f"{display_value(sandbox.get('action'))}"
+                )
+
+                st.markdown(
+                    f"**Allowed:** "
+                    f"{display_value(sandbox.get('allowed'))}"
+                )
+
+                st.markdown(
+                    f"**Simulation:** "
+                    f"{display_value(sandbox.get('simulation', True))}"
+                )
+
+                st.markdown(
+                    f"**Real System Modified:** "
+                    f"{display_value(sandbox.get('real_system_modified', False))}"
+                )
+
+        st.divider()
+
+        # ========================================================
+        # RAG
+        # ========================================================
+
+        st.header(
+            "RAG Knowledge Retrieval"
+        )
+
+        st.caption(
+            "Evidence retrieved from the industrial "
+            "maintenance knowledge base."
+        )
+
+        rag_query = rag.get(
+            "query",
+            "—",
+        )
+
+        st.markdown(
+            f"**Retrieval Query:** "
+            f"{display_value(rag_query)}"
+        )
+
+        if rag_results:
+
+            for item in rag_results:
+
+                item = safe_dict(
+                    item
+                )
+
+                source = (
+                    item.get(
+                        "source"
+                    )
+                    or item.get(
+                        "file"
+                    )
+                    or item.get(
+                        "document"
+                    )
+                    or "Knowledge Base"
+                )
+
+                text = (
+                    item.get(
+                        "text"
+                    )
+                    or item.get(
+                        "content"
+                    )
+                    or item.get(
+                        "chunk"
+                    )
+                    or str(item)
+                )
+
+                with st.container(
+                    border=True
+                ):
+
+                    st.markdown(
+                        f"📄 **{display_value(source)}**"
+                    )
+
+                    st.write(
+                        display_value(
+                            text
+                        )
+                    )
+
+        else:
+
+            st.info(
+                "No RAG evidence was retrieved."
+            )
+
+        st.divider()
+
+        # ========================================================
+        # AGENT TRACE
+        # ========================================================
+
+        st.header(
+            "Agent Action Trace"
+        )
+
+        st.caption(
+            "Explicit action/observation trace generated "
+            "by the orchestrator."
+        )
+
+        if trace:
+
+            for item in trace:
+
+                item = safe_dict(
+                    item
+                )
+
+                step = item.get(
+                    "step",
+                    "—",
+                )
+
+                agent = item.get(
+                    "agent",
+                    "unknown_agent",
+                )
+
+                trace_action = item.get(
+                    "action",
+                    "—",
+                )
+
+                observation = item.get(
+                    "observation",
+                    "—",
+                )
+
+                with st.expander(
+                    f"Step {step} — {agent}"
+                ):
+
+                    st.markdown(
+                        f"**Action:** "
+                        f"{display_value(trace_action)}"
+                    )
+
+                    st.write(
+                        display_value(
+                            observation
+                        )
+                    )
+
+        else:
+
+            st.info(
+                "No agent trace available."
+            )
+
+        st.divider()
+
+        # ========================================================
+        # SCENARIO VALIDATION
+        # ========================================================
+
+        st.header(
+            "Scenario Validation"
+        )
+
+        st.caption(
+            "Comparison against the scenario's expected decision. "
+            "Ground truth is used only for verification and is not "
+            "passed to agents."
+        )
+
+        expected_level_clean = (
+            str(
+                expected_level
+            )
+            .strip()
+            .lower()
+        )
+
+        expected_decision_clean = (
+            str(
+                expected_decision
+            )
+            .strip()
+            .lower()
+        )
+
+        actual_level_clean = (
+            str(
+                incident_level
+            )
+            .strip()
+            .lower()
+        )
+
+        actual_decision_clean = (
+            str(
+                decision
+            )
+            .strip()
+            .lower()
+        )
+
+        level_match = (
+            expected_level_clean
+            == actual_level_clean
+        )
+
+        decision_match = (
+            expected_decision_clean
+            == actual_decision_clean
+        )
+
+        overall_match = (
+            level_match
+            and decision_match
+        )
+
+        if overall_match:
+
+            st.success(
+                "✓ Scenario validation passed — "
+                "actual incident level and decision "
+                "match the configured expectation."
+            )
+
+        else:
+
+            st.warning(
+                "Scenario validation did not fully "
+                "match the configured expectation."
+            )
+
+        validation_col1, validation_col2 = st.columns(
+            2
+        )
+
+        with validation_col1:
+
+            with st.container(
+                border=True
+            ):
+
+                st.markdown(
+                    "**Expected Incident Level**"
+                )
+
+                st.write(
+                    str(
+                        expected_level
+                    ).upper()
+                )
+
+                st.markdown(
+                    "**Actual Incident Level**"
+                )
+
+                st.write(
+                    str(
+                        incident_level
+                    ).upper()
+                )
+
+        with validation_col2:
+
+            with st.container(
+                border=True
+            ):
+
+                st.markdown(
+                    "**Expected Decision**"
+                )
+
+                st.write(
+                    display_value(
+                        expected_decision
+                    )
+                )
+
+                st.markdown(
+                    "**Actual Decision**"
+                )
+
+                st.write(
+                    display_value(
+                        decision
+                    )
+                )
+
+        st.divider()
+
+        # ========================================================
+        # RAW RESULT
+        # ========================================================
+
+        with st.expander(
+            "View complete orchestration result",
+            expanded=False,
+        ):
+
+            st.json(
+                result,
+                expanded=False,
+            )
+
+
+# ================================================================
+# FOOTER
+# ================================================================
+
+st.divider()
+
+st.caption(
+    "Autonomous Incident Response System • "
+    "Multi-Agent Architecture • "
+    "RAG-Grounded Investigation • "
+    "Sandbox-Safe Simulation"
+)

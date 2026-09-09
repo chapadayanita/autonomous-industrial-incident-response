@@ -1,0 +1,73 @@
+{
+  "version": "1.0",
+  "document_count": 4,
+  "chunk_count": 11,
+  "chunks": [
+    {
+      "chunk_id": "escalation_policy_0",
+      "source": "escalation_policy.md",
+      "title": "Incident Escalation Policy",
+      "text": "# Incident Escalation Policy"
+    },
+    {
+      "chunk_id": "escalation_policy_1",
+      "source": "escalation_policy.md",
+      "title": "Normal",
+      "text": "## Normal\n\nNo significant anomaly evidence.\n\nAction:\n- Continue routine monitoring."
+    },
+    {
+      "chunk_id": "escalation_policy_2",
+      "source": "escalation_policy.md",
+      "title": "Low",
+      "text": "## Low\n\nLimited anomaly evidence affecting one sensor.\n\nAction:\n- Continue monitoring.\n- Investigate if the condition persists."
+    },
+    {
+      "chunk_id": "escalation_policy_3",
+      "source": "escalation_policy.md",
+      "title": "Medium",
+      "text": "## Medium\n\nMultiple sensor signals or moderate anomaly evidence.\n\nAction:\n- Increase monitoring.\n- Request additional diagnostic evidence."
+    },
+    {
+      "chunk_id": "escalation_policy_4",
+      "source": "escalation_policy.md",
+      "title": "High",
+      "text": "## High\n\nStrong anomaly evidence or significant sensor abnormalities.\n\nAction:\n- Escalate for operational assessment.\n- Request additional diagnostic evidence.\n- Notify maintenance personnel when appropriate."
+    },
+    {
+      "chunk_id": "escalation_policy_5",
+      "source": "escalation_policy.md",
+      "title": "Critical",
+      "text": "## Critical\n\nVery strong anomaly evidence or multiple severe indicators.\n\nAction:\n- Immediately escalate for operational assessment.\n- Request additional diagnostic evidence.\n- Prioritize maintenance intervention.\n- Do not automatically perform physical shutdown without authorized operational confirmation."
+    },
+    {
+      "chunk_id": "pressure_procedures_0",
+      "source": "pressure_procedures.md",
+      "title": "Pressure Inspection Procedure",
+      "text": "# Pressure Inspection Procedure\n\nWhen abnormal pressure behavior is detected:\n\n1. Verify the sensor reading.\n2. Check upstream and downstream pressure conditions.\n3. Inspect valves and connected piping.\n4. Check for leakage or blockage.\n5. Compare current pressure with normal operating conditions.\n6. Escalate persistent abnormalities for maintenance assessment."
+    },
+    {
+      "chunk_id": "pump_faults_0",
+      "source": "pump_faults.md",
+      "title": "Pump Fault Diagnosis",
+      "text": "# Pump Fault Diagnosis"
+    },
+    {
+      "chunk_id": "pump_faults_1",
+      "source": "pump_faults.md",
+      "title": "Mechanical Vibration",
+      "text": "## Mechanical Vibration\n\nAbnormal vibration in rotating equipment can indicate mechanical problems.\n\nPossible causes include:\n- Bearing degradation\n- Shaft misalignment\n- Rotor imbalance\n- Loose mounting\n- Coupling problems\n\nRecommended inspection:\n1. Inspect bearings and rotating components.\n2. Check shaft and coupling alignment.\n3. Inspect equipment mounting.\n4. Check for unusual mechanical noise.\n5. Compare vibration with normal operating conditions."
+    },
+    {
+      "chunk_id": "pump_faults_2",
+      "source": "pump_faults.md",
+      "title": "Pressure Anomalies",
+      "text": "## Pressure Anomalies\n\nUnexpected pressure changes may indicate:\n- Leakage\n- Blockage\n- Valve problems\n- Pump performance degradation\n\nRecommended inspection:\n1. Check pressure readings.\n2. Inspect connected pipes and valves.\n3. Check for visible leakage.\n4. Verify pump operating conditions."
+    },
+    {
+      "chunk_id": "vibration_procedures_0",
+      "source": "vibration_procedures.md",
+      "title": "Vibration Inspection Procedure",
+      "text": "# Vibration Inspection Procedure\n\nWhen abnormal vibration is detected:\n\n1. Confirm that the vibration signal persists.\n2. Inspect the pump and rotating equipment.\n3. Check mounting bolts and structural supports.\n4. Check shaft and coupling alignment.\n5. Inspect bearings for visible damage or unusual conditions.\n6. Record inspection observations.\n7. Escalate persistent or severe abnormalities to maintenance personnel.\n\nDo not assume a specific component has failed without supporting evidence."
+    }
+  ]
+}

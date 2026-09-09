@@ -1,0 +1,14 @@
+{
+  "scenario_id": "pump_fault",
+  "description": "Pump operating condition showing strong mechanical anomaly evidence.",
+  "expected_incident_level": "critical",
+  "expected_decision": "priority_maintenance_escalation",
+  "source_file": "10.csv",
+  "start_row": 500,
+  "analysis_window": 500,
+  "simulation": {
+    "sensor_condition": "mechanical_vibration_anomaly",
+    "drone_required": true,
+    "visual_anomaly": true
+  }
+}

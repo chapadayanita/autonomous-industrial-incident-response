@@ -1,0 +1,48 @@
+{
+    "model": "IsolationForest",
+    "random_state": 42,
+    "n_estimators": 400,
+    "feature_count": 88,
+    "train_experiments": [
+        "0.csv",
+        "1.csv",
+        "10.csv",
+        "11.csv",
+        "12.csv",
+        "13.csv",
+        "14.csv",
+        "15.csv",
+        "2.csv",
+        "3.csv",
+        "4.csv"
+    ],
+    "validation_experiments": [
+        "5.csv",
+        "6.csv"
+    ],
+    "test_experiments": [
+        "7.csv",
+        "8.csv",
+        "9.csv"
+    ],
+    "normal_training_rows": 16935,
+    "validation_f1": 0.43273013375295044,
+    "threshold": -0.007057157595105568,
+    "test_metrics": {
+        "accuracy": 0.6607063691443771,
+        "precision": 0.5248397435897436,
+        "recall": 0.2777777777777778,
+        "f1_score": 0.3632834165280089,
+        "true_positive": 655,
+        "true_negative": 3816,
+        "false_positive": 593,
+        "false_negative": 1703,
+        "false_alarm_rate": 0.1344976185075981,
+        "missed_alarm_rate": 0.7222222222222222,
+        "roc_auc": 0.5522315273466198,
+        "pr_auc": 0.4175387120979251,
+        "rows": 6767,
+        "actual_anomalies": 2358,
+        "predicted_anomalies": 1248
+    }
+}

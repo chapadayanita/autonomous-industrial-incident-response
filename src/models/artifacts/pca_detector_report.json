@@ -1,0 +1,61 @@
+{
+    "model": "PCA_T2_Q",
+    "features": 88,
+    "pca_components": 28,
+    "explained_variance": 0.9522448395622585,
+    "train_experiments": [
+        "0.csv",
+        "1.csv",
+        "10.csv",
+        "11.csv",
+        "12.csv",
+        "13.csv",
+        "14.csv",
+        "15.csv",
+        "2.csv",
+        "3.csv",
+        "4.csv"
+    ],
+    "validation_experiments": [
+        "5.csv",
+        "6.csv"
+    ],
+    "test_experiments": [
+        "7.csv",
+        "8.csv",
+        "9.csv"
+    ],
+    "validation": {
+        "accuracy": 0.8006507592190889,
+        "precision": 0.8881506090808416,
+        "recall": 0.49506172839506174,
+        "f1_score": 0.6357510899722553,
+        "roc_auc": 0.6426660886081177,
+        "pr_auc": 0.5958280741579894,
+        "true_positive": 802,
+        "true_negative": 2889,
+        "false_positive": 101,
+        "false_negative": 818,
+        "false_alarm_rate": 0.033779264214046825,
+        "missed_alarm_rate": 0.5049382716049383,
+        "predicted_anomalies": 903,
+        "actual_anomalies": 1620,
+        "threshold": 4.263152423840238
+    },
+    "test": {
+        "accuracy": 0.7375498743904241,
+        "precision": 0.8375870069605569,
+        "recall": 0.3061916878710772,
+        "f1_score": 0.4484472049689441,
+        "roc_auc": 0.5856902499725387,
+        "pr_auc": 0.5113537616301216,
+        "true_positive": 722,
+        "true_negative": 4269,
+        "false_positive": 140,
+        "false_negative": 1636,
+        "false_alarm_rate": 0.03175323202540259,
+        "missed_alarm_rate": 0.6938083121289228,
+        "predicted_anomalies": 862,
+        "actual_anomalies": 2358
+    }
+}

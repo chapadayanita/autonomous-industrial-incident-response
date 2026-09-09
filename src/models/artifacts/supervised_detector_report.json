@@ -1,0 +1,60 @@
+{
+    "model": "ExtraTrees + RandomForest Soft Voting Ensemble",
+    "feature_count": 88,
+    "train_experiments": [
+        "0.csv",
+        "1.csv",
+        "10.csv",
+        "11.csv",
+        "12.csv",
+        "13.csv",
+        "14.csv",
+        "15.csv",
+        "2.csv",
+        "3.csv",
+        "4.csv"
+    ],
+    "validation_experiments": [
+        "5.csv",
+        "6.csv"
+    ],
+    "test_experiments": [
+        "7.csv",
+        "8.csv",
+        "9.csv"
+    ],
+    "threshold": 0.42046092184368744,
+    "validation": {
+        "accuracy": 0.9123644251626898,
+        "precision": 0.959909228441755,
+        "recall": 0.7833333333333333,
+        "f1_score": 0.8626784500339905,
+        "roc_auc": 0.9192927040753127,
+        "pr_auc": 0.9175920492020758,
+        "true_positive": 1269,
+        "true_negative": 2937,
+        "false_positive": 53,
+        "false_negative": 351,
+        "false_alarm_rate": 0.017725752508361205,
+        "missed_alarm_rate": 0.21666666666666667,
+        "predicted_anomalies": 1322,
+        "actual_anomalies": 1620,
+        "threshold": 0.42046092184368744
+    },
+    "test": {
+        "accuracy": 0.901433426924782,
+        "precision": 0.9055155875299761,
+        "recall": 0.8006785411365565,
+        "f1_score": 0.8498762097681747,
+        "roc_auc": 0.9450446509385634,
+        "pr_auc": 0.9313428352590685,
+        "true_positive": 1888,
+        "true_negative": 4212,
+        "false_positive": 197,
+        "false_negative": 470,
+        "false_alarm_rate": 0.044681333635745064,
+        "missed_alarm_rate": 0.1993214588634436,
+        "predicted_anomalies": 2085,
+        "actual_anomalies": 2358
+    }
+}

@@ -1,0 +1,14 @@
+{
+  "scenario_id": "ambiguous_condition",
+  "description": "A low-confidence sensor condition with insufficient evidence for critical escalation, requiring enhanced monitoring.",
+  "expected_incident_level": "medium",
+  "expected_decision": "enhanced_monitoring",
+  "source_file": "6.csv",
+  "start_row": 0,
+  "analysis_window": 500,
+  "simulation": {
+    "sensor_condition": "weak_or_conflicting_anomaly",
+    "drone_required": true,
+    "visual_anomaly": false
+  }
+}
