@@ -688,3 +688,8 @@ https://github.com/chapadayanita
 Project:
 
 https://github.com/chapadayanita/autonomous-industrial-incident-response
+## 🎥 Demo
+
+[▶️ Watch the Autonomous Incident Response Demo](https://drive.google.com/file/d/1_VnxJCY_ez1uJpPnjSlsbNP1uUr9eACs/view?usp=sharing)
+
+A short walkthrough demonstrating dynamic sensor-stream monitoring, ML-based anomaly detection, multi-agent investigation, simulated drone inspection, RAG-grounded evidence retrieval, autonomous escalation, and sandbox-safe execution.
