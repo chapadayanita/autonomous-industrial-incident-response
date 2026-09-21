@@ -85,6 +85,12 @@ The system is designed so that incoming sensor measurements drive the investigat
                 +---------------------+
                          |
                          v
+                +---------------------+
+                | LLM Operator Report |
+                | (explanation only)  |
+                +---------------------+
+                        |
+                        v
                 Structured Incident Log
 ```
 
@@ -285,6 +291,24 @@ real_system_modified = False
 No real industrial system or physical equipment is modified by this project.
 
 This provides a safety boundary between autonomous reasoning and operational execution.
+
+---
+
+# LLM Operator Incident Report
+
+After the agents reach a decision, an LLM (Google Gemini) writes a short plain-language incident report
+for the human operator. The report is built only from evidence the agents already produced (affected sensors,
+ML probability, drone finding, decision) and the maintenance procedure retrieved by the RAG module.
+
+The LLM does **not** make or change any decision and does not trigger any action. All decisions come from the
+ML model and the rule-based agents. If the API is unavailable (no key, no internet, rate limit), a deterministic
+template report is used instead, and the dashboard labels it "template fallback".
+
+The report is shown in the dashboard under **Operator Incident Report**, only for incidents that reach
+the escalation stage. Normal operation produces no report.
+
+Setup: set `GEMINI_API_KEY` in your local `.env` (a free key is available from Google AI Studio).
+The system also runs without a key, using the template fallback.
 
 ---
 
