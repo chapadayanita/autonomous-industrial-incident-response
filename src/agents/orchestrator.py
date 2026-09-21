@@ -172,6 +172,10 @@ class OrchestratorAgent:
             get_escalation_agent,
         )
 
+        from src.agents.incident_report import (
+            generate_incident_report,
+        )
+
         from src.sandbox.executor import (
             SandboxExecutor,
         )
@@ -641,6 +645,79 @@ class OrchestratorAgent:
         )
 
         # ============================================================
+        # STEP 6B - LLM INCIDENT REPORT (explanation only)
+        # The LLM never makes decisions. It only writes a plain-language
+        # report from evidence the agents already produced.
+        # ============================================================
+
+        procedure_texts = []
+
+        for item in rag_result.get("results", [])[:2]:
+
+            item = item if isinstance(item, dict) else {}
+
+            procedure_texts.append(
+                str(
+                    item.get("text")
+                    or item.get("content")
+                    or item.get("chunk")
+                    or ""
+                )[:600]
+            )
+
+        procedure_text = (
+            "\n".join(t for t in procedure_texts if t)
+            or "No procedure retrieved."
+        )
+
+        report_evidence = {
+            "sensor": (
+                ", ".join(str(s) for s in affected_sensors)
+                or "multiple sensors"
+            ),
+            "summary": (
+                f"incident level {incident_level}; "
+                f"ML anomaly probability {ml_probability:.2f}; "
+                f"drone visual anomaly: {visual_anomaly}"
+            ),
+            "decision": final_decision["decision"],
+            "priority": final_decision["priority"],
+            "action": final_decision["action"],
+            "reason": final_decision["reason"],
+        }
+
+        escalated = "escalation" in str(
+            final_decision["decision"]
+        ).lower()
+
+        try:
+            report_text, report_source = generate_incident_report(
+                report_evidence,
+                procedure_text,
+                escalated,
+            )
+        except Exception:
+            report_text, report_source = (
+                "Incident report unavailable.",
+                "template",
+            )
+
+        incident_report = {
+            "text": report_text,
+            "source": report_source,
+        }
+
+        step += 1
+
+        self._add_trace(
+            trace,
+            step,
+            "incident_reporter",
+            "generate_incident_report",
+            f"Operator report generated via {report_source}.",
+        )
+
+        # ============================================================
         # COMPLETE INCIDENT RESULT
         # ============================================================
 
@@ -670,6 +747,7 @@ class OrchestratorAgent:
             },
 
             "escalation": escalation_result,
+            "incident_report": incident_report,
 
             "sandbox": sandbox_result,
 
