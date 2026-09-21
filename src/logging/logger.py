@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class IncidentLogger:

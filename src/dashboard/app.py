@@ -8,7 +8,8 @@
 #
 # No raw HTML / no unsafe_allow_html
 # ================================================================
-
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 import sys
 import json
 from pathlib import Path
