@@ -55,7 +55,7 @@ def generate_incident_report(evidence: dict, procedure: str, escalated: bool) ->
     user_msg = (
         f"Evidence: {evidence}\n"
         f"Retrieved maintenance procedure: {procedure}\n"
-        f"Human escalation required: {'yes' if escalated else 'no'}""
+        f"Human escalation required: {'yes' if escalated else 'no'}"
     )
     try:
         from google import genai  # imported here so the fallback works without the package
