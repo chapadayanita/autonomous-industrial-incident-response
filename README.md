@@ -9,6 +9,20 @@ A short walkthrough demonstrating dynamic sensor-stream monitoring, ML-based ano
 
 The system processes a simulated industrial sensor stream, detects anomalous equipment behavior using a supervised machine-learning ensemble, investigates incidents through multiple specialized agents, retrieves relevant maintenance knowledge using RAG, simulates drone-based inspection evidence, and produces a safety-controlled response decision.
 
+**Live Application:**  
+https://autonomous-industrial-incident-response-production.up.railway.app
+
+The deployed Streamlit application provides an interactive demonstration of:
+
+- Dynamic industrial sensor-stream monitoring
+- ML-based anomaly detection
+- Multi-agent incident investigation
+- Simulated drone inspection
+- RAG-based maintenance evidence retrieval
+- Evidence-based escalation
+- Safety-controlled execution
+- LLM-generated operator incident reports
+
 ---
 
 ## Overview
